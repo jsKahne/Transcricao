@@ -67,6 +67,13 @@ async def transcribe_video(
             await queue_manager.send_webhook_response(request_id)
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/health")
+async def health_check():
+    """
+    Endpoint para verificar a saúde da API
+    """
+    return {"status": "healthy"}
+
 async def process_transcription(
     request_id: str,
     file_id: str,
@@ -79,8 +86,16 @@ async def process_transcription(
     temp_dir = None
     
     try:
-        # Atualizar status
-        await queue_manager.update_status(request_id, "processing")
+        # Atualizar status para download
+        await queue_manager.update_status(
+            request_id=request_id,
+            status="processing",
+            stage="downloading",
+            progress={
+                'percentage': 0,
+                'details': 'Iniciando download do vídeo'
+            }
+        )
         
         # Criar diretório temporário
         temp_dir = FileManager.create_temp_directory()
@@ -88,13 +103,27 @@ async def process_transcription(
         try:
             # Download do vídeo
             video_content, video_name = await drive_service.download_file(file_id)
+            await queue_manager.update_status(
+                request_id=request_id,
+                status="processing",
+                stage="downloading",
+                progress={
+                    'percentage': 50,
+                    'details': 'Download em andamento'
+                }
+            )
         except RefreshError:
             # Se houver erro de autenticação, enviar URL de login
             login_url = drive_service.get_authorization_url()
             await queue_manager.update_status(
                 request_id=request_id,
                 status="auth_required",
-                error="Autenticação necessária"
+                stage="auth_required",
+                error="Autenticação necessária",
+                progress={
+                    'percentage': 0,
+                    'details': 'Necessária autenticação no Google Drive'
+                }
             )
             await queue_manager.send_webhook_response(request_id, login_url=login_url)
             return
@@ -104,25 +133,86 @@ async def process_transcription(
         
         # Salvar vídeo
         FileManager.save_bytes_to_file(video_content, video_path)
+        await queue_manager.update_status(
+            request_id=request_id,
+            status="processing",
+            stage="downloading",
+            progress={
+                'percentage': 100,
+                'details': 'Download concluído'
+            }
+        )
         
         # Verificar se o vídeo foi salvo corretamente
         if not FileManager.ensure_file_exists(video_path):
             raise FileNotFoundError(f"Erro ao salvar arquivo de vídeo: {video_path}")
         
         # Extrair áudio
+        await queue_manager.update_status(
+            request_id=request_id,
+            status="processing",
+            stage="extracting_audio",
+            progress={
+                'percentage': 0,
+                'details': 'Iniciando extração do áudio'
+            }
+        )
         transcription_service.extract_audio(video_path, audio_path)
+        await queue_manager.update_status(
+            request_id=request_id,
+            status="processing",
+            stage="extracting_audio",
+            progress={
+                'percentage': 100,
+                'details': 'Extração de áudio concluída'
+            }
+        )
         
         # Verificar se o áudio foi extraído corretamente
         if not FileManager.ensure_file_exists(audio_path):
             raise FileNotFoundError(f"Erro ao extrair áudio: {audio_path}")
         
         # Transcrever
-        transcription = transcription_service.transcribe(audio_path, language)
+        await queue_manager.update_status(
+            request_id=request_id,
+            status="processing",
+            stage="transcribing",
+            progress={
+                'percentage': 0,
+                'details': 'Iniciando transcrição'
+            }
+        )
+        
+        # Iniciar transcrição com callback de progresso
+        def transcription_progress(current, total):
+            percentage = int((current / total) * 100)
+            asyncio.create_task(
+                queue_manager.update_status(
+                    request_id=request_id,
+                    status="processing",
+                    stage="transcribing",
+                    progress={
+                        'percentage': percentage,
+                        'details': f'Transcrevendo áudio: {percentage}%'
+                    }
+                )
+            )
+        
+        transcription = transcription_service.transcribe(
+            audio_path,
+            language,
+            progress_callback=transcription_progress
+        )
         
         # Atualizar status e enviar resultado
         await queue_manager.update_status(
             request_id=request_id,
             status="completed",
+            stage="completed",
+            progress={
+                'percentage': 100,
+                'details': 'Transcrição concluída'
+            },
             result=transcription
         )
         await queue_manager.send_webhook_response(request_id)
@@ -134,6 +224,11 @@ async def process_transcription(
         await queue_manager.update_status(
             request_id=request_id,
             status="error",
+            stage="error",
+            progress={
+                'percentage': 0,
+                'details': str(e)
+            },
             error=str(e)
         )
         await queue_manager.send_webhook_response(request_id)

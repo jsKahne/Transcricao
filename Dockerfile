@@ -5,6 +5,7 @@ WORKDIR /app
 # Instalar dependências do sistema
 RUN apt-get update && apt-get install -y \
     ffmpeg \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copiar arquivos do projeto
@@ -14,6 +15,9 @@ COPY main.py .
 
 # Instalar dependências Python
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Criar diretório para arquivos temporários
+RUN mkdir -p /app/temp
 
 # Expor porta
 EXPOSE 8000

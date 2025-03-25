@@ -31,9 +31,10 @@ ENV/
 *.swp
 *.swo
 
-# Credentials
+# Credentials and Environment
 credentials.json
 token.json
+.env
 
 # Frontend
 frontend/node_modules/
@@ -49,3 +50,5 @@ frontend/yarn-error.log*
 # Temporary files
 temp/
 *.tmp
+temp_*.mp3
+temp_*.mp4

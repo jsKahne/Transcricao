@@ -1,92 +1,87 @@
 import whisper
-from moviepy.editor import VideoFileClip
-import logging
+import subprocess
 from pathlib import Path
-from app.core.config import settings
-import os
-import time
+import logging
+from typing import Optional, Callable
 
 logger = logging.getLogger(__name__)
 
-# Adicionar FFmpeg ao PATH
-os.environ["PATH"] = os.environ["PATH"] + os.pathsep + r"C:\ProgramData\chocolatey\lib\ffmpeg\tools\ffmpeg\bin"
-
 class TranscriptionService:
     def __init__(self):
-        self.model = None
+        self.model = whisper.load_model("base")
+        logger.info("Modelo Whisper carregado com sucesso")
 
-    def _load_model(self):
-        """Carrega o modelo Whisper se ainda não estiver carregado"""
-        if self.model is None:
-            logger.info(f"Carregando modelo Whisper: {settings.WHISPER_MODEL}")
-            self.model = whisper.load_model(settings.WHISPER_MODEL)
-
-    def extract_audio(self, video_path: Path, audio_path: Path) -> None:
-        """Extrai áudio do vídeo"""
+    def extract_audio(self, video_path: Path, output_path: Path):
+        """Extrai áudio de um vídeo usando FFmpeg"""
+        logger.info(f"Iniciando extração de áudio do vídeo: {video_path}")
         try:
-            video_path_str = str(video_path.absolute())
-            audio_path_str = str(audio_path.absolute())
+            command = [
+                'ffmpeg', '-i', str(video_path),
+                '-vn',  # Desabilita vídeo
+                '-acodec', 'libmp3lame',  # Usa codec MP3
+                '-ar', '44100',  # Sample rate
+                '-ac', '2',  # Canais de áudio
+                '-b:a', '192k',  # Bitrate
+                str(output_path),
+                '-y'  # Sobrescreve arquivo se existir
+            ]
             
-            logger.info(f"Extraindo áudio de {video_path_str}")
-            video = VideoFileClip(video_path_str)
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
             
-            if video.audio is None:
-                raise ValueError("O vídeo não contém áudio")
+            stdout, stderr = process.communicate()
             
-            video.audio.write_audiofile(audio_path_str)
-            video.close()
-            
-            # Aguardar um momento para garantir que o arquivo foi escrito
-            time.sleep(1)
-            
-            if not os.path.exists(audio_path_str):
-                raise FileNotFoundError(f"Arquivo de áudio não foi criado: {audio_path_str}")
+            if process.returncode != 0:
+                logger.error(f"Erro ao extrair áudio: {stderr.decode()}")
+                raise Exception(f"Erro ao extrair áudio: {stderr.decode()}")
                 
-            logger.info(f"Áudio extraído com sucesso: {audio_path_str}")
+            logger.info(f"Áudio extraído com sucesso: {output_path}")
             
         except Exception as e:
-            logger.error(f"Erro ao extrair áudio: {e}")
+            logger.error(f"Erro ao executar FFmpeg: {str(e)}")
             raise
-        finally:
-            try:
-                video.close()
-            except:
-                pass
 
-    def transcribe(self, audio_path: Path, language: str = None) -> str:
-        """Transcreve o áudio para texto"""
+    def transcribe(self, audio_path: Path, language: Optional[str] = None, progress_callback: Optional[Callable[[int, int], None]] = None) -> str:
+        """
+        Transcreve um arquivo de áudio usando Whisper
+        
+        Args:
+            audio_path: Caminho para o arquivo de áudio
+            language: Código do idioma (opcional)
+            progress_callback: Função de callback para progresso (opcional)
+            
+        Returns:
+            str: Texto transcrito
+        """
         try:
-            self._load_model()
+            logger.info(f"Iniciando transcrição do áudio: {audio_path}")
             
-            audio_path_str = str(audio_path.absolute())
-            logger.info(f"Verificando arquivo de áudio: {audio_path_str}")
-            
-            if not os.path.exists(audio_path_str):
-                raise FileNotFoundError(f"Arquivo de áudio não encontrado: {audio_path_str}")
-            
-            # Verificar tamanho do arquivo
-            file_size = os.path.getsize(audio_path_str)
-            logger.info(f"Tamanho do arquivo de áudio: {file_size} bytes")
-            
-            if file_size == 0:
-                raise ValueError(f"Arquivo de áudio está vazio: {audio_path_str}")
+            # Configurar opções do Whisper
+            options = {
+                "language": language if language else None,
+                "task": "transcribe",
+                "verbose": True
+            }
 
-            # Verificar permissões
-            if not os.access(audio_path_str, os.R_OK):
-                raise PermissionError(f"Sem permissão para ler o arquivo: {audio_path_str}")
+            # Função de callback personalizada para o Whisper
+            def whisper_callback(current: int, total: int):
+                if progress_callback:
+                    progress_callback(current, total)
+                logger.info(f"Progresso da transcrição: {int((current/total)*100)}%")
 
-            logger.info(f"Iniciando transcrição do arquivo: {audio_path_str}")
-            
-            # Configurar opções de transcrição
-            options = {}
-            if language:
-                options["language"] = language
-            
-            result = self.model.transcribe(audio_path_str, **options)
+            # Realizar transcrição
+            result = self.model.transcribe(
+                str(audio_path),
+                **options,
+                progress_callback=whisper_callback
+            )
             
             logger.info("Transcrição concluída com sucesso")
             return result["text"]
             
         except Exception as e:
-            logger.error(f"Erro na transcrição: {e}")
+            logger.error(f"Erro durante a transcrição: {str(e)}")
             raise
