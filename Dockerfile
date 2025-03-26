@@ -1,26 +1,42 @@
-FROM python:3.11-slim
-
-WORKDIR /app
+# Estágio de construção
+FROM python:3.11-slim as builder
 
 # Instalar dependências do sistema
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    git \
     ffmpeg \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copiar arquivos do projeto
-COPY requirements.txt .
-COPY app/ ./app/
-COPY main.py .
+# Configurar diretório de trabalho
+WORKDIR /app
+
+# Clonar o repositório
+RUN git clone https://github.com/jsKahne/Transcricao.git /tmp/src && \
+    cp -r /tmp/src/* /app/ && \
+    rm -rf /tmp/src
 
 # Instalar dependências Python
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
+    pip install --no-cache-dir -r requirements.txt
 
-# Criar diretório para arquivos temporários
-RUN mkdir -p /app/temp
+# Imagem final
+FROM python:3.11-slim
 
-# Expor porta
-EXPOSE 8000
+# Instalar ffmpeg e curl
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    ffmpeg \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Configurar diretório de trabalho
+WORKDIR /app
+
+# Copiar arquivos do estágio de construção
+COPY --from=builder /app /app
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 
 # Comando para iniciar a aplicação
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "main.py"]
