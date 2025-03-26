@@ -10,7 +10,7 @@ import logging
 import aiohttp
 import asyncio
 import whisper
-from moviepy.editor import VideoFileClip
+from moviepy import VideoFileClip
 import shutil
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
