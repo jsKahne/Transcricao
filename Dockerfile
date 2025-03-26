@@ -21,9 +21,13 @@ RUN git clone https://github.com/jsKahne/Transcricao.git
 # Define o diretório de trabalho no repositório clonado
 WORKDIR /opt/transcricao-whisper-v1/Transcricao
 
-# Instala as dependências do Python a partir do requirements.txt
+# Garante que o pip está atualizado e instala as dependências
 RUN pip3 install --no-cache-dir --upgrade pip && \
-    pip3 install --no-cache-dir -r requirements.txt
+    if [ -f "requirements.txt" ]; then \
+      pip3 install --no-cache-dir -r requirements.txt; \
+    else \
+      echo "requirements.txt não encontrado"; exit 1; \
+    fi
 
 # Cria a pasta temp e ajusta permissões
 RUN mkdir -p temp && chmod 777 temp
