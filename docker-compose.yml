@@ -18,9 +18,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 6G
+          memory: 8G
         reservations:
-          memory: 3G
+          memory: 4G
       restart_policy:
         condition: any
         delay: 5s
