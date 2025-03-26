@@ -1,46 +1,44 @@
-# Usa a imagem Python slim (mais leve)
 FROM python:3.11-slim
 
-# Define o diretório de trabalho dentro do container
-WORKDIR /opt/transcricao-whisper-v1
+# Evita problemas de cache e reduz tamanho
+ENV PYTHONDONTWRITEBYTECODE 1
+ENV PYTHONUNBUFFERED 1
 
-# Instala as dependências do sistema
+# Etapa 1: build dos wheels (cache opcional para acelerar)
+FROM python:3.11-slim as builder
+
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-    git \
-    ffmpeg \
-    curl \
-    python3-pip \
-    python3-dev \
-    build-essential && \
-    rm -rf /var/lib/apt/lists/*
+        gcc \
+        python3-dev \
+        ffmpeg \
+        curl \
+        && rm -rf /var/lib/apt/lists/*
 
-# Clona o repositório
-RUN git clone https://github.com/jsKahne/Transcricao.git
+WORKDIR /app
 
-# Define o diretório de trabalho no repositório clonado
-WORKDIR /opt/transcricao-whisper-v1/Transcricao
+COPY requirements.txt .
+RUN mkdir /app/wheels && \
+    pip wheel --wheel-dir=/app/wheels -r requirements.txt
 
-# Garante que o pip está atualizado e instala as dependências
-RUN pip3 install --no-cache-dir --upgrade pip && \
-    if [ -f "requirements.txt" ]; then \
-      pip3 install --no-cache-dir -r requirements.txt; \
-    else \
-      echo "requirements.txt não encontrado"; exit 1; \
-    fi
+# Etapa 2: imagem final
+FROM python:3.11-slim
 
-# Cria a pasta temp e ajusta permissões
-RUN mkdir -p temp && chmod 777 temp
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ffmpeg \
+        curl \
+        && rm -rf /var/lib/apt/lists/*
 
-# Define variáveis de ambiente
-ENV PYTHONPATH=/opt/transcricao-whisper-v1/Transcricao
-ENV TZ=America/Sao_Paulo
-ENV WHISPER_MODEL=tiny
-ENV PROJECT_NAME="Video Transcription API"
-ENV VERSION="1.0.0"
+WORKDIR /app
 
-# Expõe a porta da API
-EXPOSE 8000
+# Copia os arquivos e roda a instalação com fallback no PyPI
+COPY --from=builder /app/wheels /wheels
+COPY --from=builder /app/requirements.txt .
 
-# Comando para rodar o FastAPI com Uvicorn
-CMD ["python3", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+RUN pip install --no-cache-dir --find-links=/wheels -r requirements.txt && \
+    rm -rf /wheels
+
+COPY . .
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
